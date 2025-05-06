@@ -1,85 +1,63 @@
 "use client"
 
-import { useState } from "react"
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Calendar, ChevronDown, Loader2 } from "lucide-react"
-import { format } from "date-fns"
-
-interface Event {
-  id: string
-  name: string
-  date: string
-  location: string
-}
+import { useState, useEffect } from "react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Loader2 } from "lucide-react"
 
 interface EventSelectorProps {
-  events: Event[]
-  selectedEventId?: string
+  events: any[]
+  selectedEventId?: string | null
   onSelect: (eventId: string) => void
   isLoading?: boolean
 }
 
-export function EventSelector({ events, selectedEventId, onSelect, isLoading = false }: EventSelectorProps) {
-  const [isOpen, setIsOpen] = useState(false)
-
-  const selectedEvent = events.find((event) => event.id === selectedEventId)
-
-  // Sort events by date (most recent first)
-  const sortedEvents = [...events].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-
-  return (
-    <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="outline"
-          className="w-full md:w-auto bg-[#131525] border-[#1f2037] text-white hover:bg-[#1f2037] hover:text-white"
-          disabled={isLoading}
-        >
-          {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Calendar className="mr-2 h-4 w-4" />}
-          {selectedEvent ? (
-            <span className="flex-1 text-left mr-2 truncate">{selectedEvent.name}</span>
-          ) : (
-            <span className="flex-1 text-left mr-2">Select Event</span>
-          )}
-          <ChevronDown className="h-4 w-4 opacity-50" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-[280px] bg-[#131525] border-[#1f2037] text-white">
-        <DropdownMenuLabel>Marketing Events</DropdownMenuLabel>
-        <DropdownMenuSeparator className="bg-[#1f2037]" />
-        {sortedEvents.length > 0 ? (
-          sortedEvents.map((event) => (
-            <DropdownMenuItem
-              key={event.id}
-              className={`flex flex-col items-start cursor-pointer ${
-                event.id === selectedEventId ? "bg-blue-600/20" : ""
-              } hover:bg-[#1f2037]`}
-              onClick={() => {
-                onSelect(event.id)
-                setIsOpen(false)
-              }}
-            >
-              <div className="font-medium">{event.name}</div>
-              <div className="text-xs text-gray-400 flex items-center gap-2">
-                <Calendar className="h-3 w-3" />
-                {format(new Date(event.date), "MMM d, yyyy")} • {event.location}
-              </div>
-            </DropdownMenuItem>
-          ))
-        ) : (
-          <div className="px-2 py-4 text-center text-sm text-gray-400">No events found</div>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
+export interface Event {
+  id: string
+  date: string
+  name: string
+  location: string
+  type: string
+  topic?: string
+  budget: number
 }
 
-export type { Event }
+export function EventSelector({ events, selectedEventId, onSelect, isLoading = false }: EventSelectorProps) {
+  const [value, setValue] = useState<string>(selectedEventId || "")
+
+  // Update the value when selectedEventId changes
+  useEffect(() => {
+    if (selectedEventId && selectedEventId !== value) {
+      setValue(selectedEventId)
+    } else if (!selectedEventId && events.length > 0 && !value) {
+      // Set default value if no event is selected
+      setValue(events[0].id)
+    }
+  }, [selectedEventId, events, value])
+
+  const handleValueChange = (newValue: string) => {
+    setValue(newValue)
+    onSelect(newValue)
+  }
+
+  if (events.length === 0) {
+    return <div className="text-sm text-white/70">No events available</div>
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      {isLoading && <Loader2 className="h-4 w-4 animate-spin text-white/70" />}
+      <Select value={value} onValueChange={handleValueChange} disabled={isLoading}>
+        <SelectTrigger className="w-[250px] bg-m8bs-card border-m8bs-border text-white">
+          <SelectValue placeholder="Select an event" />
+        </SelectTrigger>
+        <SelectContent className="bg-m8bs-card border-m8bs-border text-white">
+          {events.map((event) => (
+            <SelectItem key={event.id} value={event.id}>
+              {event.name || "Unnamed Event"} ({new Date(event.date).toLocaleDateString()})
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}

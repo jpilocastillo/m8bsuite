@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import { AnalyticsDashboard } from "@/components/dashboard/analytics/analytics-dashboard"
 import { DashboardError } from "@/components/dashboard/dashboard-error"
+import { fetchAnalyticsData } from "@/lib/data"
 
 export const dynamic = "force-dynamic"
 
@@ -22,7 +23,14 @@ export default async function AnalyticsPage() {
       redirect("/login")
     }
 
-    return <AnalyticsDashboard userId={data.user.id} />
+    // Fetch analytics data with error handling
+    try {
+      const analyticsData = await fetchAnalyticsData(data.user.id)
+      return <AnalyticsDashboard analyticsData={analyticsData} />
+    } catch (dataError) {
+      console.error("Error fetching analytics data:", dataError)
+      return <DashboardError error="An error occurred loading the analytics data. Please try again later." />
+    }
   } catch (error) {
     console.error("Unhandled error in AnalyticsPage:", error)
 

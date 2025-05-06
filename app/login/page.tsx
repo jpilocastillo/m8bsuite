@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation"
 import { cookies } from "next/headers"
 import { createClient } from "@/lib/supabase/server"
-import { LoginForm } from "@/components/login-form"
+import { LoginForm } from "@/components/auth/login-form"
 
 export default async function Login() {
   const cookieStore = cookies()
@@ -16,8 +16,8 @@ export default async function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-m8bs-bg to-m8bs-card-alt p-4">
-      <div className="w-full max-w-md">
+    <div className="fixed inset-0 flex items-center justify-center bg-gradient-to-br from-m8bs-bg to-m8bs-card-alt">
+      <div className="w-full max-w-md px-4">
         <LoginForm />
       </div>
     </div>

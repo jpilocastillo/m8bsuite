@@ -45,18 +45,14 @@ export default async function Dashboard() {
     }
 
     // Fetch dashboard data for the most recent event (default)
-    if (!error) {
+    if (!error && events.length > 0) {
       try {
-        if (events.length > 0) {
-          dashboardData = await fetchDashboardData(user.id)
-          // If dashboardData is null but we have events, there might be an issue with data fetching
-          if (!dashboardData) {
-            console.warn("Dashboard data is null despite having events")
-            error = "Unable to load dashboard data. Please try again later."
-          }
-        } else {
-          console.log("No events found, skipping dashboard data fetch")
-          // No events to show, dashboardData remains null
+        dashboardData = await fetchDashboardData(user.id)
+
+        // If dashboardData is null but we have events, there might be an issue with data fetching
+        if (!dashboardData) {
+          console.warn("Dashboard data is null despite having events")
+          error = "Unable to load dashboard data. Please try again later."
         }
       } catch (e) {
         console.error("Error loading dashboard data:", e)

@@ -36,6 +36,7 @@ export function DashboardContent({ initialData, events, userId }: DashboardConte
   useEffect(() => {
     try {
       console.log("Dashboard Data:", dashboardData)
+      console.log("Available Events:", events)
 
       // Check specific fields that might be causing issues
       if (dashboardData) {
@@ -47,7 +48,7 @@ export function DashboardContent({ initialData, events, userId }: DashboardConte
     } catch (err) {
       console.error("Error in dashboard data logging:", err)
     }
-  }, [dashboardData])
+  }, [dashboardData, events])
 
   useEffect(() => {
     async function loadEventData(eventId: string) {
@@ -60,6 +61,7 @@ export function DashboardContent({ initialData, events, userId }: DashboardConte
 
         if (!data) {
           setError("Failed to load event data. Please try again.")
+          setLoading(false)
           return
         }
 
@@ -159,7 +161,12 @@ export function DashboardContent({ initialData, events, userId }: DashboardConte
           <span className="font-medium">Event Date:</span>
           <span className="ml-2 font-bold">{formattedDate}</span>
         </div>
-        <EventSelector events={events} onSelect={setSelectedEventId} />
+        <EventSelector
+          events={events}
+          selectedEventId={selectedEventId || dashboardData.eventId}
+          onSelect={setSelectedEventId}
+          isLoading={loading}
+        />
       </div>
 
       {/* Top metrics */}

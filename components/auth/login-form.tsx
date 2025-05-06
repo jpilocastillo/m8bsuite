@@ -38,7 +38,13 @@ export function LoginForm() {
       const { success, error } = await loginUser(values.email, values.password)
 
       if (success) {
-        router.push("/dashboard")
+        // Clear form after successful login
+        form.reset()
+
+        // Use replace instead of push to avoid back button issues
+        router.replace("/dashboard")
+
+        // Force a refresh to ensure all components update with the new auth state
         router.refresh()
       } else {
         toast({
@@ -48,6 +54,7 @@ export function LoginForm() {
         })
       }
     } catch (error) {
+      console.error("Login error:", error)
       toast({
         variant: "destructive",
         title: "Login failed",
@@ -59,13 +66,13 @@ export function LoginForm() {
   }
 
   return (
-    <div className="mx-auto max-w-sm space-y-6">
-      <div className="space-y-2 text-center">
+    <div className="w-full bg-white dark:bg-gray-950 p-8 rounded-lg shadow-lg">
+      <div className="space-y-4 text-center">
         <h1 className="text-3xl font-bold">Login</h1>
         <p className="text-gray-500 dark:text-gray-400">Enter your credentials to access your account</p>
       </div>
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-6">
           <FormField
             control={form.control}
             name="email"
@@ -92,13 +99,13 @@ export function LoginForm() {
               </FormItem>
             )}
           />
-          <Button type="submit" className="w-full" disabled={isLoading}>
+          <Button type="submit" className="w-full mt-6" disabled={isLoading}>
             {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {isLoading ? "Logging in..." : "Login"}
           </Button>
         </form>
       </Form>
-      <div className="text-center text-sm">
+      <div className="text-center text-sm mt-6">
         Don&apos;t have an account?{" "}
         <Link href="/register" className="underline">
           Register

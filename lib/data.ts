@@ -1,7 +1,7 @@
 "use server"
 import { createAdminClient } from "@/lib/supabase/admin"
 
-// Improved fetchWithRetry function with better error handling
+// Improved fetchWithRetry function with better error handling for rate limiting
 async function fetchWithRetry(fn, maxRetries = 3, delay = 1000) {
   let lastError
 
@@ -26,14 +26,19 @@ async function fetchWithRetry(fn, maxRetries = 3, delay = 1000) {
       console.log(`Error during fetch attempt ${attempt + 1}/${maxRetries}:`, error.message)
 
       // Check if it's a rate limiting error
-      if (error.message && error.message.includes("Too Many R")) {
+      if (
+        error.message &&
+        (error.message.includes("Too Many R") || error.message.includes("429") || error.message.includes("rate limit"))
+      ) {
         console.log(`Rate limit hit, retrying in ${delay}ms... (Attempt ${attempt + 1}/${maxRetries})`)
         await new Promise((resolve) => setTimeout(resolve, delay))
+        // Exponential backoff
         delay *= 2
       } else if (error.message && (error.message.includes("Failed to fetch") || error.message.includes("network"))) {
         // Handle network errors with retry
         console.log(`Network error, retrying in ${delay}ms... (Attempt ${attempt + 1}/${maxRetries})`)
         await new Promise((resolve) => setTimeout(resolve, delay))
+        // Exponential backoff
         delay *= 2
       } else {
         // For other errors, log more details but don't retry
@@ -390,6 +395,8 @@ export async function fetchDashboardData(userId: string, eventId?: string) {
     // Map old field names to new ones if needed
     const annuityPremium = financialProduction?.annuity_premium || financialProduction?.fixed_annuity || 0
     const lifeInsurancePremium = financialProduction?.life_insurance_premium || financialProduction?.life_insurance || 0
+
+    // Use these fields if they exist, otherwise default to 0
     const annuityCommission = financialProduction?.annuity_commission || 0
     const lifeInsuranceCommission = financialProduction?.life_insurance_commission || 0
 
@@ -1061,5 +1068,338 @@ export async function deleteEvent(eventId: string) {
   } catch (error) {
     console.error("Error in deleteEvent:", error)
     return { success: false, error: "An unexpected error occurred" }
+  }
+}
+
+// Fetch analytics data for all events with improved error handling
+export async function fetchAnalyticsData(userId: string) {
+  if (!userId) {
+    console.error("fetchAnalyticsData called without userId")
+    return null
+  }
+
+  try {
+    const supabase = await createAdminClient()
+
+    // Define a safe set of columns that we know exist in financial_production
+    // Instead of querying information_schema which might not be accessible
+    const safeFinancialProductionColumns =
+      "fixed_annuity, life_insurance, aum, financial_planning, total, annuities_sold, life_policies_sold"
+
+    // Wrap the query in fetchWithRetry to handle rate limiting
+    const fetchMarketingEvents = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("marketing_events")
+          .select(`
+            id,
+            name,
+            date,
+            location,
+            marketing_type,
+            topic,
+            marketing_expenses (total_cost, advertising_cost, food_venue_cost),
+            event_attendance (registrant_responses, confirmations, attendees, clients_from_event),
+            event_appointments (set_at_event, set_after_event, first_appointment_attended, first_appointment_no_shows, second_appointment_attended),
+            financial_production (${safeFinancialProductionColumns})
+          `)
+          .eq("user_id", userId)
+          .order("date", { ascending: false })
+
+        if (error) throw error
+        return { data, error }
+      } catch (error) {
+        console.error("Error fetching marketing events:", error)
+        throw error
+      }
+    }
+
+    // Use fetchWithRetry to handle rate limiting
+    const { data: marketingEvents, error: marketingError } = await fetchWithRetry(fetchMarketingEvents)
+
+    let events = marketingEvents || []
+
+    // If no marketing events, try the events table
+    if (!events || events.length === 0) {
+      console.log("No marketing events found, trying events table")
+
+      const fetchOldEvents = async () => {
+        try {
+          const { data, error } = await supabase
+            .from("events")
+            .select(`
+              id,
+              name,
+              date,
+              event_details (location, type, topic),
+              marketing_expenses (total_cost, advertising_cost, food_venue_cost),
+              event_attendance (registrant_responses, confirmations, attendees, clients_from_event),
+              event_appointments (set_at_event, set_after_event, first_appointment_attended, first_appointment_no_shows, second_appointment_attended),
+              financial_production (${safeFinancialProductionColumns})
+            `)
+            .eq("user_id", userId)
+            .order("date", { ascending: false })
+
+          if (error) throw error
+          return { data, error }
+        } catch (error) {
+          console.error("Error fetching old events:", error)
+          throw error
+        }
+      }
+
+      // Use fetchWithRetry to handle rate limiting
+      const { data: oldEvents, error: oldEventsError } = await fetchWithRetry(fetchOldEvents)
+
+      if (oldEventsError) {
+        console.error("Error fetching events:", oldEventsError)
+      } else {
+        events = oldEvents || []
+      }
+    }
+
+    if (!events || events.length === 0) {
+      console.log("No events found for analytics")
+      return {
+        summary: {
+          totalEvents: 0,
+          totalAttendees: 0,
+          avgAttendees: 0,
+          totalRevenue: 0,
+          totalExpenses: 0,
+          totalProfit: 0,
+          overallROI: 0,
+          totalClients: 0,
+          overallConversionRate: 0,
+          appointmentConversionRate: 0,
+          avgAppointments: 0,
+          avgClients: 0,
+        },
+        events: [],
+        monthlyData: [],
+        metricsByType: [],
+      }
+    }
+
+    console.log(`Found ${events.length} events for analytics`)
+
+    // Calculate performance metrics
+    const totalEvents = events.length
+    const totalAttendees = events.reduce((sum, event) => {
+      const attendees = event.event_attendance?.[0]?.attendees || 0
+      return sum + attendees
+    }, 0)
+
+    const totalAppointments = events.reduce(
+      (sum, event) => sum + (event.event_appointments?.[0]?.first_appointment_attended || 0),
+      0,
+    )
+
+    const totalClients = events.reduce((sum, event) => {
+      // First try to get clients_from_event from attendance
+      const clientsFromEvent = event.event_attendance?.[0]?.clients_from_event || 0
+      if (clientsFromEvent > 0) {
+        return sum + clientsFromEvent
+      }
+      // Fall back to annuities_sold + life_policies_sold
+      return (
+        sum +
+        (event.financial_production?.[0]?.annuities_sold || 0) +
+        (event.financial_production?.[0]?.life_policies_sold || 0)
+      )
+    }, 0)
+
+    // Calculate average metrics
+    const avgAttendees = totalEvents > 0 ? totalAttendees / totalEvents : 0
+    const avgAppointments = totalEvents > 0 ? totalAppointments / totalEvents : 0
+    const avgClients = totalEvents > 0 ? totalClients / totalEvents : 0
+
+    // Calculate conversion rates
+    const overallConversionRate = totalAttendees > 0 ? (totalClients / totalAttendees) * 100 : 0
+    const appointmentConversionRate = totalAppointments > 0 ? (totalClients / totalAppointments) * 100 : 0
+
+    // Calculate financial metrics
+    const totalRevenue = events.reduce((sum, event) => {
+      const revenue = event.financial_production?.[0]?.total || 0
+      return sum + revenue
+    }, 0)
+
+    const totalExpenses = events.reduce((sum, event) => {
+      const expenses = event.marketing_expenses?.[0]?.total_cost || 0
+      return sum + expenses
+    }, 0)
+
+    const totalProfit = totalRevenue - totalExpenses
+    const overallROI = totalExpenses > 0 ? (totalProfit / totalExpenses) * 100 : 0
+
+    // Calculate metrics by event type
+    const eventTypes = [
+      ...new Set(
+        events
+          .map((event) => {
+            // For marketing_events, use marketing_type
+            if (event.marketing_type) {
+              return event.marketing_type
+            }
+            // For old events, use event_details.type
+            return event.event_details?.[0]?.type || "Unknown"
+          })
+          .filter(Boolean),
+      ),
+    ]
+
+    const metricsByType = eventTypes.map((type) => {
+      const typeEvents = events.filter((event) => {
+        if (event.marketing_type) {
+          return event.marketing_type === type
+        }
+        return event.event_details?.[0]?.type === type
+      })
+
+      const typeAttendees = typeEvents.reduce((sum, event) => sum + (event.event_attendance?.[0]?.attendees || 0), 0)
+      const typeClients = typeEvents.reduce((sum, event) => {
+        // First try to get clients_from_event from attendance
+        const clientsFromEvent = event.event_attendance?.[0]?.clients_from_event || 0
+        if (clientsFromEvent > 0) {
+          return sum + clientsFromEvent
+        }
+        // Fall back to annuities_sold + life_policies_sold
+        return (
+          sum +
+          (event.financial_production?.[0]?.annuities_sold || 0) +
+          (event.financial_production?.[0]?.life_policies_sold || 0)
+        )
+      }, 0)
+      const typeRevenue = typeEvents.reduce((sum, event) => sum + (event.financial_production?.[0]?.total || 0), 0)
+      const typeExpenses = typeEvents.reduce((sum, event) => sum + (event.marketing_expenses?.[0]?.total_cost || 0), 0)
+      const typeROI = typeExpenses > 0 ? ((typeRevenue - typeExpenses) / typeExpenses) * 100 : 0
+      const typeConversion = typeAttendees > 0 ? (typeClients / typeAttendees) * 100 : 0
+
+      return {
+        type,
+        count: typeEvents.length,
+        attendees: typeAttendees,
+        clients: typeClients,
+        revenue: typeRevenue,
+        expenses: typeExpenses,
+        roi: typeROI,
+        conversionRate: typeConversion,
+      }
+    })
+
+    // Calculate metrics over time (last 6 months)
+    const now = new Date()
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1)
+
+    // Create array of last 6 months
+    const months = []
+    for (let i = 0; i < 6; i++) {
+      const month = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      months.unshift(month)
+    }
+
+    const monthlyData = months.map((month) => {
+      const monthStart = new Date(month.getFullYear(), month.getMonth(), 1)
+      const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0)
+
+      const monthEvents = events.filter((event) => {
+        const eventDate = new Date(event.date)
+        return eventDate >= monthStart && eventDate <= monthEnd
+      })
+
+      const monthAttendees = monthEvents.reduce((sum, event) => sum + (event.event_attendance?.[0]?.attendees || 0), 0)
+      const monthRevenue = monthEvents.reduce((sum, event) => sum + (event.financial_production?.[0]?.total || 0), 0)
+      const monthExpenses = monthEvents.reduce(
+        (sum, event) => sum + (event.marketing_expenses?.[0]?.total_cost || 0),
+        0,
+      )
+
+      return {
+        month: month.toLocaleDateString("en-US", { month: "short", year: "numeric" }),
+        attendees: monthAttendees,
+        revenue: monthRevenue,
+        expenses: monthExpenses,
+        profit: monthRevenue - monthExpenses,
+      }
+    })
+
+    // Process events data for the frontend
+    const processedEvents = events.map((event) => {
+      // Get location from either marketing_events or event_details
+      const location = event.location || event.event_details?.[0]?.location || "Unknown"
+
+      // Get type from either marketing_type or event_details.type
+      const type = event.marketing_type || event.event_details?.[0]?.type || "Unknown"
+
+      // Get topic from either topic or event_details.topic
+      const topic = event.topic || event.event_details?.[0]?.topic || "Unknown"
+
+      const attendees = event.event_attendance?.[0]?.attendees || 0
+      const clients =
+        event.event_attendance?.[0]?.clients_from_event ||
+        (event.financial_production?.[0]?.annuities_sold || 0) +
+          (event.financial_production?.[0]?.life_policies_sold || 0)
+      const revenue = event.financial_production?.[0]?.total || 0
+      const expenses = event.marketing_expenses?.[0]?.total_cost || 0
+      const profit = revenue - expenses
+      const roi = expenses > 0 ? (profit / expenses) * 100 : 0
+
+      return {
+        id: event.id,
+        name: event.name || topic || "Unnamed Event",
+        date: event.date,
+        location,
+        type,
+        attendees,
+        clients,
+        revenue,
+        expenses,
+        profit,
+        roi,
+      }
+    })
+
+    return {
+      summary: {
+        totalEvents,
+        totalAttendees,
+        totalAppointments,
+        totalClients,
+        totalRevenue,
+        totalExpenses,
+        totalProfit,
+        overallROI,
+        overallConversionRate,
+        appointmentConversionRate,
+        avgAttendees,
+        avgAppointments,
+        avgClients,
+      },
+      metricsByType,
+      monthlyData,
+      events: processedEvents,
+    }
+  } catch (error) {
+    console.error("Error in fetchAnalyticsData:", error)
+    // Return default data structure instead of null to prevent UI errors
+    return {
+      summary: {
+        totalEvents: 0,
+        totalAttendees: 0,
+        avgAttendees: 0,
+        totalRevenue: 0,
+        totalExpenses: 0,
+        totalProfit: 0,
+        overallROI: 0,
+        totalClients: 0,
+        overallConversionRate: 0,
+        appointmentConversionRate: 0,
+        avgAppointments: 0,
+        avgClients: 0,
+      },
+      events: [],
+      monthlyData: [],
+      metricsByType: [],
+    }
   }
 }

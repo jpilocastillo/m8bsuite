@@ -28,12 +28,18 @@ export default function RootLayout({
       </head>
       <body className={`${inter.className} bg-m8bs-bg`}>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
-          <AuthProvider>
-            {children}
-            <Toaster />
-          </AuthProvider>
+          <ErrorBoundary>
+            <AuthProvider>
+              {children}
+              <Toaster />
+            </AuthProvider>
+          </ErrorBoundary>
         </ThemeProvider>
       </body>
     </html>
   )
+}
+
+function ErrorBoundary({ children }: { children: React.ReactNode }) {
+  return <div>{children}</div>
 }

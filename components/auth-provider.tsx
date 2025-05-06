@@ -3,97 +3,117 @@
 import type React from "react"
 
 import { createContext, useContext, useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-import type { Session, User } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/client"
-import { LoadingScreen } from "@/components/loading-screen"
+import { useRouter } from "next/navigation"
+
+type User = any | null
 
 type AuthContextType = {
-  user: User | null
-  session: Session | null
-  isLoading: boolean
+  user: User
   signOut: () => Promise<void>
+  isLoading: boolean
+  error: string | null
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
-  session: null,
-  isLoading: true,
   signOut: async () => {},
+  isLoading: true,
+  error: null,
 })
 
+export const useAuth = () => useContext(AuthContext)
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
+  const [user, setUser] = useState<User>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()
 
   useEffect(() => {
-    const getSession = async () => {
-      try {
-        const {
-          data: { session },
-          error,
-        } = await supabase.auth.getSession()
+    try {
+      const getUser = async () => {
+        try {
+          setIsLoading(true)
 
-        if (error) {
-          console.error("Error getting session:", error)
-          // Clear any invalid session state
-          setSession(null)
+          const {
+            data: { user: authUser },
+            error: authError,
+          } = await supabase.auth.getUser()
+
+          if (authError) {
+            console.error("Error getting user:", authError)
+            setError(authError.message)
+            setUser(null)
+          } else {
+            setUser(authUser)
+            setError(null)
+          }
+        } catch (error) {
+          console.error("Unexpected error in getUser:", error)
+          setError("An unexpected error occurred while getting user data")
           setUser(null)
+        } finally {
           setIsLoading(false)
-          return
         }
-
-        setSession(session)
-        setUser(session?.user ?? null)
-        setIsLoading(false)
-      } catch (error) {
-        console.error("Exception getting session:", error)
-        setSession(null)
-        setUser(null)
-        setIsLoading(false)
       }
-    }
 
-    getSession()
+      // Call getUser immediately
+      getUser()
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
-      setUser(session?.user ?? null)
+      // Set up auth state change listener
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange(async (event, session) => {
+        try {
+          if (event === "SIGNED_IN" && session) {
+            setUser(session.user)
+            router.refresh()
+          } else if (event === "SIGNED_OUT") {
+            setUser(null)
+            router.refresh()
+          }
+        } catch (error) {
+          console.error("Error in auth state change:", error)
+          setError("An error occurred during authentication state change")
+        }
+      })
+
+      // Cleanup function
+      return () => {
+        if (subscription) {
+          subscription.unsubscribe()
+        }
+      }
+    } catch (error) {
+      console.error("Fatal error in AuthProvider:", error)
+      setError("A critical error occurred in the authentication system")
       setIsLoading(false)
-    })
-
-    return () => {
-      subscription.unsubscribe()
     }
-  }, [router])
+  }, [supabase, router])
 
   const signOut = async () => {
     try {
       await supabase.auth.signOut()
-      setSession(null)
       setUser(null)
       router.push("/login")
-      router.refresh()
     } catch (error) {
       console.error("Error signing out:", error)
-      // Force a hard refresh to clear any client-side state
-      window.location.href = "/login"
+      setError("An error occurred while signing out")
     }
   }
 
-  const value = {
-    user,
-    session,
-    isLoading,
-    signOut,
-  }
-
-  return <AuthContext.Provider value={value}>{isLoading ? <LoadingScreen /> : children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        signOut,
+        isLoading,
+        error,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  )
 }
-
-export const useAuth = () => useContext(AuthContext)

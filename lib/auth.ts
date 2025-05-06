@@ -1,14 +1,12 @@
 "use server"
+import { cookies } from "next/headers"
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 
-async function createSupabaseClient() {
-  return await createClient()
-}
-
 export async function registerUser(name: string, email: string, password: string, company?: string) {
   try {
-    const supabase = await createSupabaseClient()
+    const cookieStore = cookies()
+    const supabase = createClient(cookieStore)
 
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -96,9 +94,10 @@ export async function registerUser(name: string, email: string, password: string
 
 export async function loginUser(email: string, password: string) {
   try {
-    const supabase = await createSupabaseClient()
+    const cookieStore = cookies()
+    const supabase = createClient(cookieStore)
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
@@ -108,7 +107,7 @@ export async function loginUser(email: string, password: string) {
       return { success: false, error: error.message }
     }
 
-    return { success: true }
+    return { success: true, user: data.user }
   } catch (error) {
     console.error("Error in loginUser:", error)
     return { success: false, error: "An unexpected error occurred." }
@@ -117,7 +116,9 @@ export async function loginUser(email: string, password: string) {
 
 export async function getCurrentUser() {
   try {
-    const supabase = await createSupabaseClient()
+    const cookieStore = cookies()
+    const supabase = createClient(cookieStore)
+
     const {
       data: { session },
     } = await supabase.auth.getSession()
